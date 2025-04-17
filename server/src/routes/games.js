@@ -22,8 +22,10 @@ router.get('/start', async (req, res) => {
       .sort(() => Math.random() - 0.5)
       .map(garment => ({
         id: garment._id,
+        name: garment.name,
         imageUrl: garment.imageUrl,
-        defects: garment.isOriginal ? [] : garment.defects
+        defects: garment.isOriginal ? [] : garment.defects,
+        isOriginal: garment.isOriginal
       }));
 
     res.json(garments);

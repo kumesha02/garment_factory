@@ -21,9 +21,11 @@ interface Defect {
 }
 
 interface Garment {
-  id: number;
+  id: string;
+  name: string;
   imageUrl: string;
   defects: Defect[];
+  isOriginal: boolean;
 }
 
 const Game = () => {
@@ -32,8 +34,78 @@ const Game = () => {
   const [currentGarment, setCurrentGarment] = useState<number>(0);
   const [score, setScore] = useState<number>(0);
   const [gameOver, setGameOver] = useState<boolean>(false);
-  const [selectedPoint, setSelectedPoint] = useState<{ x: number; y: number } | null>(null);
+  const [selectedPoint, setSelectedPoint] = useState<{ x: number; y: number, isDefect: boolean } | null>(null);
   const [garments, setGarments] = useState<Garment[]>([]); // This will be populated from API
+  const [foundDefects, setFoundDefects] = useState<Set<string>>(new Set());
+  const SERVER_URL = 'http://localhost:5001';
+
+  const handleImageClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const image = event.currentTarget.querySelector('img');
+    if (!image) return;
+
+    const imageRect = image.getBoundingClientRect();
+    const scaleX = image.naturalWidth / imageRect.width;
+    const scaleY = image.naturalHeight / imageRect.height;
+
+    const x = (event.clientX - imageRect.left);
+    const y = (event.clientY - imageRect.top);
+
+    // Convert to scaled coordinates for defect detection
+    const scaledX = x * scaleX;
+    const scaledY = y * scaleY;
+
+    // Check if the clicked point is within any defect's radius
+    const currentDefects = garments[currentGarment]?.defects || [];
+    const defectIndex = currentDefects.findIndex(defect => {
+      const distance = Math.sqrt(
+        Math.pow(scaledX - defect.x, 2) + 
+        Math.pow(scaledY - defect.y, 2)
+      );
+      return distance <= defect.radius;
+    });
+
+    const defectKey = `${currentGarment}-${defectIndex}`;
+    const isNewDefect = defectIndex !== -1 && !foundDefects.has(defectKey);
+
+    if (isNewDefect) {
+      setFoundDefects(prev => new Set([...prev, defectKey]));
+      setScore(prev => prev + 20);
+      setSelectedPoint({ x, y, isDefect: true });
+      console.log('New defect found! Score updated:', score + 20);
+    } else {
+      setSelectedPoint({ x, y, isDefect: false });
+      console.log('No new defect found at coordinates:', { x: scaledX, y: scaledY });
+    }
+  };
+
+  // Fetch garments on component mount
+  useEffect(() => {
+    const fetchGarments = async () => {
+      try {
+        const response = await fetch(`${SERVER_URL}/api/games/start`);
+        if (!response.ok) {
+          throw new Error('Failed to fetch garments');
+        }
+        const data = await response.json();
+        if (!Array.isArray(data) || data.length === 0) {
+          throw new Error('Invalid garments data received');
+        }
+        const garmentData = data.map(garment => ({
+          ...garment,
+          imageUrl: garment.imageUrl.startsWith('http') 
+            ? garment.imageUrl 
+            : `/images/garments/${garment.imageUrl}`,
+          defects: garment.isOriginal ? [] : garment.defects || []
+        }));
+        setGarments(garmentData);
+      } catch (error) {
+        console.error('Error fetching garments:', error);
+        setGameOver(true);
+      }
+    };
+
+    fetchGarments();
+  }, []);
 
   // Timer effect
   useEffect(() => {
@@ -47,107 +119,116 @@ const Game = () => {
     }
   }, [timeLeft, gameOver]);
 
-  const handleImageClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    setSelectedPoint({ x, y });
-
-    // Check if the clicked point is within any defect's radius
-    const currentDefects = garments[currentGarment]?.defects || [];
-    const defectFound = currentDefects.some(defect => {
-      const distance = Math.sqrt(
-        Math.pow(x - defect.x, 2) + Math.pow(y - defect.y, 2)
-      );
-      return distance <= defect.radius;
-    });
-
-    if (defectFound) {
-      setScore(prev => prev + 20);
-    }
-  };
-
+  // Function to move to the next garment
   const nextGarment = () => {
-    if (currentGarment < 9) {
+    if (currentGarment < garments.length - 1) {
       setCurrentGarment(prev => prev + 1);
       setSelectedPoint(null);
+      setFoundDefects(new Set());
     } else {
       endGame();
     }
   };
 
+  // Function to end the game
   const endGame = () => {
     setGameOver(true);
+    // Here you would typically submit the score to the server
+    // For example: submitGameResults(score);
   };
 
-  const formatTime = (seconds: number): string => {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
-    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
-  };
+  if (!garments.length) {
+    return (
+      <Container>
+        <Box display="flex" flexDirection="column" justifyContent="center" alignItems="center" minHeight="80vh">
+          <CircularProgress />
+          <Typography variant="h6" sx={{ mt: 2 }}>
+            Loading game assets...
+          </Typography>
+        </Box>
+      </Container>
+    );
+  }
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Grid container spacing={3}>
-        <Grid item xs={12}>
-          <Paper sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Typography variant="h6">
-              Time Remaining: {formatTime(timeLeft)}
-            </Typography>
-            <Typography variant="h6">
-              Score: {score}/100
-            </Typography>
-            <Typography variant="h6">
-              Garment: {currentGarment + 1}/10
-            </Typography>
-          </Paper>
-        </Grid>
+    <Container>
+      <Box sx={{ py: 4 }}>
+        <Paper elevation={3} sx={{ p: 3 }}>
+          <Grid container spacing={2} alignItems="center" justifyContent="space-between">
+            <Grid item>
+              <Typography variant="h6">Time Remaining: {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}</Typography>
+            </Grid>
+            <Grid item>
+              <Typography variant="h6">Score: {score}/100</Typography>
+            </Grid>
+            <Grid item>
+              <Typography variant="h6">Garment: {currentGarment + 1}/10</Typography>
+            </Grid>
+          </Grid>
 
-        <Grid item xs={12}>
-          <Paper
-            sx={{
-              p: 2,
-              height: '60vh',
+          <Box 
+            sx={{ 
+              mt: 4, 
+              position: 'relative',
+              width: '100%',
+              height: '600px',
               display: 'flex',
               justifyContent: 'center',
               alignItems: 'center',
-              position: 'relative',
+              backgroundColor: '#f5f5f5',
               cursor: 'crosshair',
-            }}
+              '& img': {
+                maxWidth: '100%',
+                maxHeight: '100%',
+                objectFit: 'contain',
+                display: 'block'
+              }
+            }} 
             onClick={handleImageClick}
           >
-            {garments[currentGarment] ? (
-              <Box
-                component="img"
-                src={garments[currentGarment].imageUrl}
-                sx={{ maxHeight: '100%', maxWidth: '100%' }}
-              />
-            ) : (
-              <CircularProgress />
+            {garments[currentGarment] && (
+              <>
+                <img
+                  src={garments[currentGarment].imageUrl}
+                  alt={`Garment ${currentGarment + 1} for inspection`}
+                  onError={(e) => {
+                    const imgElement = e.currentTarget;
+                    imgElement.src = '/images/garments/images.jpeg';
+                    console.error('Failed to load image:', garments[currentGarment].imageUrl);
+                  }}
+                  style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                />
+                {selectedPoint && (
+                  <Box
+                    sx={{
+                      position: 'absolute',
+                      left: selectedPoint.x - 10,
+                      top: selectedPoint.y - 10,
+                      width: 20,
+                      height: 20,
+                      borderRadius: '50%',
+                      backgroundColor: selectedPoint.isDefect ? 'rgba(0, 255, 0, 0.5)' : 'rgba(255, 0, 0, 0.5)',
+                      border: `2px solid ${selectedPoint.isDefect ? 'green' : 'red'}`,
+                      pointerEvents: 'none',
+                      animation: 'pulse 1s ease-in-out',
+                      '@keyframes pulse': {
+                        '0%': { transform: 'scale(1)' },
+                        '50%': { transform: 'scale(1.2)' },
+                        '100%': { transform: 'scale(1)' }
+                      }
+                    }}
+                  />
+                )}
+              </>
             )}
-            {selectedPoint && (
-              <Box
-                sx={{
-                  position: 'absolute',
-                  left: selectedPoint.x - 5,
-                  top: selectedPoint.y - 5,
-                  width: 10,
-                  height: 10,
-                  borderRadius: '50%',
-                  bgcolor: 'error.main',
-                }}
-              />
-            )}
-          </Paper>
-        </Grid>
+          </Box>
 
-        <Grid item xs={12}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+          <Box sx={{ mt: 3, display: 'flex', justifyContent: 'space-between' }}>
             <Button
               variant="contained"
               color="primary"
               onClick={nextGarment}
-              disabled={gameOver}
+              disabled={currentGarment >= 9}
             >
               Next Garment
             </Button>
@@ -159,22 +240,20 @@ const Game = () => {
               End Game
             </Button>
           </Box>
-        </Grid>
-      </Grid>
+        </Paper>
+      </Box>
 
-      <Dialog open={gameOver} onClose={() => navigate('/dashboard')}>
-        <DialogTitle>Game Over</DialogTitle>
+      <Dialog open={gameOver} onClose={() => navigate('/')}>
+        <DialogTitle>Game Over!</DialogTitle>
         <DialogContent>
-          <Typography variant="h6">
-            Final Score: {score}/100
-          </Typography>
-          <Typography variant="body1">
-            {score >= 75 ? 'Congratulations! You qualified for a bonus!' : 'Keep practicing to earn a bonus next time!'}
-          </Typography>
+          <Typography>Your final score: {score}/100</Typography>
+          {score >= 75 && (
+            <Typography color="success.main">Congratulations! You've earned a bonus!</Typography>
+          )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => navigate('/dashboard')} color="primary">
-            Return to Dashboard
+          <Button onClick={() => navigate('/')} color="primary">
+            Return to Home
           </Button>
         </DialogActions>
       </Dialog>
